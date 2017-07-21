@@ -2185,7 +2185,7 @@ def squad_cnn_rank_word(rng, common_input_p, common_input_q, char_common_input_p
 def squad_cnn_rank_spans_word(rng, common_input_p, common_input_q, char_common_input_p, char_common_input_q,batch_size, p_len_limit,q_len_limit,
                          emb_size, char_emb_size,char_len,filter_size,char_filter_size,hidden_size,
                          conv_W_1, conv_b_1,conv_W_2, conv_b_2, conv_W_1_q, conv_b_1_q,conv_W_2_q, conv_b_2_q, conv_W_char,conv_b_char,
-#                          conv_W_3, conv_b_3, conv_W_3_q, conv_b_3_q,
+                         conv_W_3, conv_b_3, conv_W_3_q, conv_b_3_q,
                          para_mask, q_mask, char_p_masks,char_q_masks):
     conv_input_p_char = char_common_input_p.dimshuffle(0,2,1)       #(batch_size, emb_size, maxsenlen)
     conv_model_p_char = Conv_with_Mask(rng, input_tensor3=conv_input_p_char,
@@ -2221,62 +2221,71 @@ def squad_cnn_rank_spans_word(rng, common_input_p, common_input_q, char_common_i
              mask_matrix = para_mask,
              image_shape=(batch_size, 1, hidden_size, p_len_limit),
              filter_shape=(hidden_size, 1, hidden_size, filter_size[1]), W=conv_W_2, b=conv_b_2)
-    conv_output_p_tensor3=conv_model_p_2.masked_conv_out + conv_output_p_1
+    conv_output_p_2=conv_model_p_2.masked_conv_out# + conv_output_p_1
 
     conv_model_q_2 = Conv_with_Mask(rng, input_tensor3=conv_output_q_1,
              mask_matrix = q_mask,
              image_shape=(batch_size, 1, hidden_size, q_len_limit),
              filter_shape=(hidden_size, 1, hidden_size, filter_size[1]), W=conv_W_2_q, b=conv_b_2_q)
-    q_rep=conv_model_q_1.maxpool_vec+ conv_model_q_2.maxpool_vec#(batch_size, hidden_size) # each sentence then have an embedding of length hidden_size
+    conv_output_q_2=conv_model_q_2.masked_conv_out#(batch_size, hidden_size) # each sentence then have an embedding of length hidden_size
 
-#     #the third layer
-#     conv_model_p_3 = Conv_with_Mask(rng, input_tensor3=conv_output_p_2,
-#              mask_matrix = para_mask,
-#              image_shape=(batch_size, 1, hidden_size, p_len_limit),
-#              filter_shape=(hidden_size, 1, hidden_size, filter_size[2]), W=conv_W_3, b=conv_b_3)
-#     conv_output_p_tensor3=conv_model_p_3.masked_conv_out + conv_output_p_1 + conv_output_p_2
-# 
-#     conv_model_q_3 = Conv_with_Mask(rng, input_tensor3=conv_output_q_2,
-#              mask_matrix = q_mask,
-#              image_shape=(batch_size, 1, hidden_size, q_len_limit),
-#              filter_shape=(hidden_size, 1, hidden_size, filter_size[2]), W=conv_W_3_q, b=conv_b_3_q)
-#     q_rep=conv_model_q_3.maxpool_vec + conv_model_q_1.maxpool_vec+ conv_model_q_2.maxpool_vec#(batch_size, hidden_size) # each sentence then have an embedding of length hidden_size
+    #the third layer
+    conv_model_p_3 = Conv_with_Mask(rng, input_tensor3=conv_output_p_2,
+             mask_matrix = para_mask,
+             image_shape=(batch_size, 1, hidden_size, p_len_limit),
+             filter_shape=(hidden_size, 1, hidden_size, filter_size[2]), W=conv_W_3, b=conv_b_3)
+    conv_output_p_tensor3=conv_model_p_3.masked_conv_out + conv_output_p_1 + conv_output_p_2
+
+    conv_model_q_3 = Conv_with_Mask(rng, input_tensor3=conv_output_q_2,
+             mask_matrix = q_mask,
+             image_shape=(batch_size, 1, hidden_size, q_len_limit),
+             filter_shape=(hidden_size, 1, hidden_size, filter_size[2]), W=conv_W_3_q, b=conv_b_3_q)
+    q_rep=conv_model_q_3.maxpool_vec + conv_model_q_1.maxpool_vec+ conv_model_q_2.maxpool_vec#(batch_size, hidden_size) # each sentence then have an embedding of length hidden_size
 
     p2loop_matrix = conv_output_p_tensor3.reshape((conv_output_p_tensor3.shape[0]*conv_output_p_tensor3.shape[1], conv_output_p_tensor3.shape[2]))#(batch* hidden_size, maxsenlen)
     gram_1 = p2loop_matrix
-    gram_2 = T.max(T.concatenate([p2loop_matrix[:,:-1].dimshuffle('x',0,1), p2loop_matrix[:,1:].dimshuffle('x',0,1)], axis=0), axis=0) #(batch* hidden_size, maxsenlen-1)
-    gram_3 = T.max(T.concatenate([p2loop_matrix[:,:-2].dimshuffle('x',0,1), p2loop_matrix[:,1:-1].dimshuffle('x',0,1),p2loop_matrix[:,2:].dimshuffle('x',0,1)], axis=0), axis=0) #(batch* hidden_size, maxsenlen-2)
-    gram_4 = T.max(T.concatenate([p2loop_matrix[:,:-3].dimshuffle('x',0,1), p2loop_matrix[:,1:-2].dimshuffle('x',0,1),p2loop_matrix[:,2:-1].dimshuffle('x',0,1),p2loop_matrix[:,3:].dimshuffle('x',0,1)], axis=0), axis=0) #(batch* hidden_size, maxsenlen-3)
-    gram_5 = T.max(T.concatenate([p2loop_matrix[:,:-4].dimshuffle('x',0,1), p2loop_matrix[:,1:-3].dimshuffle('x',0,1),p2loop_matrix[:,2:-2].dimshuffle('x',0,1),p2loop_matrix[:,3:-1].dimshuffle('x',0,1),p2loop_matrix[:,4:].dimshuffle('x',0,1)], axis=0), axis=0) #(batch* hidden_size, maxsenlen-4)
+    concate_2 = T.concatenate([p2loop_matrix[:,:-1].dimshuffle('x',0,1), p2loop_matrix[:,1:].dimshuffle('x',0,1)], axis=0)
+    gram_2 = T.max(concate_2, axis=0) #(batch* hidden_size, maxsenlen-1)
+    concate_3 = T.concatenate([p2loop_matrix[:,:-2].dimshuffle('x',0,1), p2loop_matrix[:,1:-1].dimshuffle('x',0,1),p2loop_matrix[:,2:].dimshuffle('x',0,1)], axis=0)
+    gram_3 = T.max(concate_3, axis=0) #(batch* hidden_size, maxsenlen-2)
+    concate_4 = T.concatenate([p2loop_matrix[:,:-3].dimshuffle('x',0,1), p2loop_matrix[:,1:-2].dimshuffle('x',0,1),p2loop_matrix[:,2:-1].dimshuffle('x',0,1),p2loop_matrix[:,3:].dimshuffle('x',0,1)], axis=0)
+    gram_4 = T.max(concate_4, axis=0) #(batch* hidden_size, maxsenlen-3)
+    concate_5 = T.concatenate([p2loop_matrix[:,:-4].dimshuffle('x',0,1), p2loop_matrix[:,1:-3].dimshuffle('x',0,1),p2loop_matrix[:,2:-2].dimshuffle('x',0,1),p2loop_matrix[:,3:-1].dimshuffle('x',0,1),p2loop_matrix[:,4:].dimshuffle('x',0,1)], axis=0)
+    gram_5 = T.max(concate_5, axis=0) #(batch* hidden_size, maxsenlen-4)
 
     gram_1_max = gram_1.reshape((batch_size, hidden_size, p_len_limit))
     gram_1_left = gram_1_max
     gram_1_right = gram_1_max
-    gram_1_comb = T.concatenate([gram_1_max,gram_1_left,gram_1_right], axis=1) #(batch, 3*hidden, p_len)
+    gram_1_sum = gram_1_max
+    gram_1_comb = T.concatenate([gram_1_max,gram_1_left,gram_1_right, gram_1_sum], axis=1) #(batch, 4*hidden, p_len)
 
     gram_2_max = gram_2.reshape((batch_size, hidden_size, p_len_limit-1))
     gram_2_left = p2loop_matrix[:,:-1].reshape((batch_size, hidden_size, p_len_limit-1))
     gram_2_right = p2loop_matrix[:,1:].reshape((batch_size, hidden_size, p_len_limit-1))
-    gram_2_comb = T.concatenate([gram_2_max,gram_2_left,gram_2_right], axis=1) #(batch, 3*hidden, p_len-1)
+    gram_2_sum = gram_2_left + gram_2_right
+    gram_2_comb = T.concatenate([gram_2_max,gram_2_left,gram_2_right, gram_2_sum], axis=1) #(batch, 4*hidden, p_len-1)
 
     gram_3_max = gram_3.reshape((batch_size, hidden_size, p_len_limit-2))
     gram_3_left = p2loop_matrix[:,:-2].reshape((batch_size, hidden_size, p_len_limit-2))
     gram_3_right = p2loop_matrix[:,2:].reshape((batch_size, hidden_size, p_len_limit-2))
-    gram_3_comb = T.concatenate([gram_3_max,gram_3_left,gram_3_right], axis=1) #(batch, 3*hidden, p_len-1)
+    gram_3_sum = T.sum(concate_3, axis=0).reshape((batch_size, hidden_size, p_len_limit-2))
+    gram_3_comb = T.concatenate([gram_3_max,gram_3_left,gram_3_right,gram_3_sum], axis=1) #(batch, 3*hidden, p_len-1)
 
     gram_4_max = gram_4.reshape((batch_size, hidden_size, p_len_limit-3))
     gram_4_left = p2loop_matrix[:,:-3].reshape((batch_size, hidden_size, p_len_limit-3))
     gram_4_right = p2loop_matrix[:,3:].reshape((batch_size, hidden_size, p_len_limit-3))
-    gram_4_comb = T.concatenate([gram_4_max,gram_4_left,gram_4_right], axis=1) #(batch, 3*hidden, p_len-1)
+    gram_4_sum = T.sum(concate_4, axis=0).reshape((batch_size, hidden_size, p_len_limit-3))
+    gram_4_comb = T.concatenate([gram_4_max,gram_4_left,gram_4_right,gram_4_sum], axis=1) #(batch, 3*hidden, p_len-1)
 
     gram_5_max = gram_5.reshape((batch_size, hidden_size, p_len_limit-4))
     gram_5_left = p2loop_matrix[:,:-4].reshape((batch_size, hidden_size, p_len_limit-4))
     gram_5_right = p2loop_matrix[:,4:].reshape((batch_size, hidden_size, p_len_limit-4))
-    gram_5_comb = T.concatenate([gram_5_max,gram_5_left,gram_5_right], axis=1) #(batch, 3*hidden, p_len-1)
+    gram_5_sum = T.sum(concate_5, axis=0).reshape((batch_size, hidden_size, p_len_limit-4))
+    gram_5_comb = T.concatenate([gram_5_max,gram_5_left,gram_5_right,gram_5_sum], axis=1) #(batch, 3*hidden, p_len-1)
 
     gram_size = 5*p_len_limit-(0+1+2+3+4)
-    span_reps=T.concatenate([gram_1_comb, gram_2_comb,gram_3_comb,gram_4_comb,gram_5_comb], axis=2).reshape((batch_size, 3*hidden_size, gram_size)) #(batch, hidden_size, maxsenlen-(0+1+2+3+4))
-    span_input4score = T.concatenate([span_reps, T.repeat(q_rep.dimshuffle(0,1,'x'), gram_size, axis=2)], axis=1) #(batch, 2*hidden, 5*p_len_limit-(0+1+2+3+4))
+    span_reps=T.concatenate([gram_1_comb, gram_2_comb,gram_3_comb,gram_4_comb,gram_5_comb], axis=2).reshape((batch_size, 4*hidden_size, gram_size)) #(batch, hidden_size, maxsenlen-(0+1+2+3+4))
+    span_input4score = T.concatenate([span_reps, T.repeat(q_rep.dimshuffle(0,1,'x'), gram_size, axis=2)], axis=1) #(batch, 5*hidden, 5*p_len_limit-(0+1+2+3+4))
 
     word_input4score = T.concatenate([conv_output_p_tensor3, T.repeat(q_rep.dimshuffle(0,1,'x'), p_len_limit, axis=2)], axis=1)*para_mask.dimshuffle(0,'x',1) #(batch, 2*hidden, p_len_limit)
     return span_input4score, word_input4score
