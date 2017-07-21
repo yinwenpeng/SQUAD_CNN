@@ -2185,6 +2185,7 @@ def squad_cnn_rank_word(rng, common_input_p, common_input_q, char_common_input_p
 def squad_cnn_rank_spans_word(rng, common_input_p, common_input_q, char_common_input_p, char_common_input_q,batch_size, p_len_limit,q_len_limit,
                          emb_size, char_emb_size,char_len,filter_size,char_filter_size,hidden_size,
                          conv_W_1, conv_b_1,conv_W_2, conv_b_2, conv_W_1_q, conv_b_1_q,conv_W_2_q, conv_b_2_q, conv_W_char,conv_b_char,
+#                          conv_W_3, conv_b_3, conv_W_3_q, conv_b_3_q,
                          para_mask, q_mask, char_p_masks,char_q_masks):
     conv_input_p_char = char_common_input_p.dimshuffle(0,2,1)       #(batch_size, emb_size, maxsenlen)
     conv_model_p_char = Conv_with_Mask(rng, input_tensor3=conv_input_p_char,
@@ -2226,7 +2227,20 @@ def squad_cnn_rank_spans_word(rng, common_input_p, common_input_q, char_common_i
              mask_matrix = q_mask,
              image_shape=(batch_size, 1, hidden_size, q_len_limit),
              filter_shape=(hidden_size, 1, hidden_size, filter_size[1]), W=conv_W_2_q, b=conv_b_2_q)
-    q_rep=conv_model_q_2.maxpool_vec + conv_model_q_1.maxpool_vec#(batch_size, hidden_size) # each sentence then have an embedding of length hidden_size
+    q_rep=conv_model_q_1.maxpool_vec+ conv_model_q_2.maxpool_vec#(batch_size, hidden_size) # each sentence then have an embedding of length hidden_size
+
+#     #the third layer
+#     conv_model_p_3 = Conv_with_Mask(rng, input_tensor3=conv_output_p_2,
+#              mask_matrix = para_mask,
+#              image_shape=(batch_size, 1, hidden_size, p_len_limit),
+#              filter_shape=(hidden_size, 1, hidden_size, filter_size[2]), W=conv_W_3, b=conv_b_3)
+#     conv_output_p_tensor3=conv_model_p_3.masked_conv_out + conv_output_p_1 + conv_output_p_2
+# 
+#     conv_model_q_3 = Conv_with_Mask(rng, input_tensor3=conv_output_q_2,
+#              mask_matrix = q_mask,
+#              image_shape=(batch_size, 1, hidden_size, q_len_limit),
+#              filter_shape=(hidden_size, 1, hidden_size, filter_size[2]), W=conv_W_3_q, b=conv_b_3_q)
+#     q_rep=conv_model_q_3.maxpool_vec + conv_model_q_1.maxpool_vec+ conv_model_q_2.maxpool_vec#(batch_size, hidden_size) # each sentence then have an embedding of length hidden_size
 
     p2loop_matrix = conv_output_p_tensor3.reshape((conv_output_p_tensor3.shape[0]*conv_output_p_tensor3.shape[1], conv_output_p_tensor3.shape[2]))#(batch* hidden_size, maxsenlen)
     gram_1 = p2loop_matrix
