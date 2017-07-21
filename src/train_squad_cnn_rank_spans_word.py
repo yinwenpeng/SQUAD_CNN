@@ -17,6 +17,7 @@ from cis.deep.utils.theano import debug_print
 from theano.tensor.signal import downsample
 from theano.tensor.nnet import conv
 from load_SQUAD import load_squad_cnn_rank_span_word_train, load_glove, decode_predict_id, load_squad_cnn_rank_span_word_dev, extract_ansList_attentionList, extract_ansList_attentionList_maxlen5, MacroF1, load_word2vec, load_word2vec_to_init
+from word2embeddings.nn.util import zero_value, random_value_normal
 from common_functions import squad_cnn_rank_spans_word,add_HLs_2_tensor3, load_model_from_file, store_model_to_file, create_LSTM_para, Bd_LSTM_Batch_Tensor_Input_with_Mask, Bd_GRU_Batch_Tensor_Input_with_Mask, create_ensemble_para, create_GRU_para, normalize_matrix, create_conv_para, Matrix_Bit_Shift, Conv_with_input_para, L2norm_paraList
 from random import shuffle
 from utils_pg import *
@@ -29,8 +30,7 @@ import json
 
 #need to try
 '''
-1, binary label vec for each word, then rank loss
-2, use word important from sentence classification
+above 35 percent epoch 3
 '''
 
 def evaluate_lenet5(learning_rate=0.01, n_epochs=3, batch_size=100, emb_size=300, char_emb_size=20, hidden_size=300,
