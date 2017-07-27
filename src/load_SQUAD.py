@@ -11,6 +11,9 @@ from nltk.tokenize import TreebankWordTokenizer
 import nltk
 from nltk.tag import pos_tag
 from nltk.tag.stanford import StanfordNERTagger
+from nltk.data import load
+from nltk import word_tokenize, pos_tag, ne_chunk
+from nltk.chunk import conlltags2tree, tree2conlltags
 from collections import defaultdict
 from evaluate import evaluate_groundtruthlist_predlist
 
@@ -19,7 +22,19 @@ from evaluate import evaluate_groundtruthlist_predlist
 from common_functions import cosine_simi
 
 path='/mounts/data/proj/wenpeng/Dataset/SQuAD/'
+_digits = re.compile('\d')
 
+# postagdict = load('help/tagsets/upenn_tagset.pickle')
+# postag_list =  postagdict.keys()
+# postag_dict = {k: v for v, k in enumerate(postag_list)}
+# postag_dict['O']=len(postag_dict)
+postag_dict = {'PRP$': 0, 'VBG': 1, 'FW': 18, 'VBN': 4, 'POS': 19, "''": 6, 'VBP': 7, 'WDT': 8, 'JJ': 9, 'WP': 10, 'VBZ': 11, 'DT': 12, 'RP': 13, '$': 14, 'NN': 15, ')': 16, '(': 17, 'VBD': 2, ',': 5, '.': 20, 'TO': 21, 'LS': 22, 'RB': 23, ':': 24, 'NNS': 25, 'NNP': 26, '``': 3, 'WRB': 28, 'CC': 29, 'PDT': 30, 'RBS': 31, 'RBR': 32, 'CD': 33, 'PRP': 34, 'EX': 35, 'IN': 36, 'WP$': 37, 'MD': 38, 'NNPS': 39, '--': 40, 'JJS': 41, 'JJR': 42, 'SYM': 43, 'VB': 27, 'UH': 44, '#':45}
+postag_size = len(postag_dict)
+nertag_dict = {'GPE':0, 'PERSON':1,'ORGANIZATION':2, 'O':3, 'FACILITY':4,'LOCATION':5, 'GSP':6}
+nertag_size = len(nertag_dict)
+wh_word_dict = {'What':0, 'When':1, 'Where':2, 'Which':3, 'Who':4, 'Whose':5, 'Why':6, 'How':7, 'How long':8, 'How many':9, 'How much':10,
+                'what':11, 'when':12, 'where':13, 'which':14, 'who':15, 'whose':16, 'why':17, 'how':18, 'how long':19, 'how many':20, 'how much':21}
+wh_word_size = len(wh_word_dict)
 def normalize_answer(s):
     """Lower text and remove punctuation, articles and extra whitespace."""
     def remove_articles(text):
@@ -3068,6 +3083,28 @@ def transfer_wordlist_2_idlist_with_maxlen(token_list, vocab_map, maxlen):
         mask_list=mask_list[:maxlen]
     return idlist, mask_list
 
+def transfer_wordlist_2_idlist_with_maxlen_return_wordlist(token_list, vocab_map, maxlen):
+    pad_size = maxlen - len(token_list)
+    if pad_size > 0:
+        token_list=['uuuuuu']*pad_size+token_list
+    else:
+        token_list = token_list[:maxlen]
+    idlist=[]
+    mask_list=[]
+    if pad_size > 0:
+        idlist+=[0]*pad_size
+        mask_list+=[0.0]*pad_size
+        valid_token_list = token_list[pad_size:]
+    else:
+        valid_token_list = token_list
+    for word in valid_token_list:
+        id=vocab_map.get(word)
+        if id is None: # if word was not in the vocabulary
+            id=len(vocab_map)+1  # id of true words starts from 1, leaving 0 to "pad id"
+            vocab_map[word]=id
+        idlist.append(id)
+        mask_list.append(1.0)
+    return idlist, mask_list, token_list
 def load_Qtype_dataset(maxlen=40):
     root="/mounts/Users/cisintern/hs/l/workhs/yin/20170623/"
     files=['trn20170623.txt', 'dev20170623.txt', 'big.dev20170623.txt']
@@ -3182,6 +3219,101 @@ def wordList_2_charIdList(word_list, word_size_limit, char_len, char2id):
         mask+=sub_char_mask
     return char_idlist, mask
 
+def wordList_to_charIdList(word_list, char_len, char2id):
+#     sent_len = len(word_list)
+#     pad_size = word_size_limit - sent_len
+#     if pad_size > 0:
+#         word_list = ['u'*char_len]*pad_size + word_list
+#     else:
+#         word_list = word_list[:word_size_limit]
+    char_idlist=[]
+    mask=[]
+    for word in word_list:
+        sub_char_idlist=[]
+        word_len = len(word)
+        for char in word:
+            char_id = char2id.get(char)
+            if char_id is None:
+                char_id = len(char2id)+1
+                char2id[char]=char_id
+            sub_char_idlist.append(char_id)
+        char_pad_size = char_len - len(sub_char_idlist)
+        if char_pad_size > 0:
+            sub_char_idlist = [0]*char_pad_size + sub_char_idlist
+            sub_char_mask = [0.0]*char_pad_size + [1.0]*word_len
+        else:
+            sub_char_idlist=sub_char_idlist[:char_len]
+            sub_char_mask = [1.0]*char_len
+        char_idlist+=sub_char_idlist
+        mask+=sub_char_mask
+    return char_idlist, mask
+
+def wordlist_2_extralist(wordlist, refer_wordlist):
+#     ner_para = ne_chunk(pos_tag(wordlist))
+#     iob_tagged_para = tree2conlltags(ner_para)
+    refer_str = ' '.join(refer_wordlist)
+    refer_len = len(refer_wordlist)
+    wh_word_index = 0
+#     for j, entry in enumerate(refer_wordlist):
+#         if entry[:2]=='wh' or entry[:2]=='Wh':
+#             wh_word_index = j
+#             break
+    qtype_vec = [0.0]*wh_word_size
+    for qtype, idd in wh_word_dict.items():
+        position = refer_str.find(qtype)
+        if position>=0:
+            qtype_vec[idd]=1.0
+            wh_word_index = len(refer_str[:position].split())
+
+    ref_vocab = set([x.lower() for x in refer_wordlist])
+    extralist=[]
+    for i, word in enumerate(wordlist):
+        extra=[0.0]*5  #uppercase, digit, isInRefer, pos/q_len, distance_to_wh/q_len
+        if word[0].isupper():
+            extra[0]=1.0
+        if bool(_digits.search(word)):
+            extra[1]=1.0
+        if word.lower() in ref_vocab:
+            extra[2]=1.0
+        
+#         co_times=wordlist.count(word)
+#         extra[3]=1.0/co_times
+        word_index_in_q=0
+        for j, entry in enumerate(refer_wordlist):
+            if word.lower() == entry.lower():
+                word_index_in_q = j
+                break
+        extra[3] = (word_index_in_q+1)*1.0/refer_len
+        extra[4] = (refer_len - word_index_in_q + wh_word_index)*1.0/refer_len
+        
+
+#         print 'qtype_vec: ', qtype_vec
+#         print      'refer_str: ', refer_str
+#         exit(0)
+        extra+=  qtype_vec  
+#         if word in  string.punctuation:
+#             extra[3]=1.0
+#         postag = iob_tagged_para[i][1]
+#         postag_index = postag_dict.get(postag)
+#         if postag_index is None:
+#             print postag, ' is not in postag_dict'
+#             exit(0)
+#         nertag = iob_tagged_para[i][2]
+#         if nertag[0]=='B' or nertag[0]=='I':
+#             nertag = nertag[2:]
+#         ner_index = nertag_dict.get(nertag)
+#         if ner_index is None:
+#             print nertag, ' is not in nertag_dict'
+#             exit(0)
+#         pos_vec = [0.0]*postag_size
+#         pos_vec[postag_index]=1.0
+#         ner_vec = [0.0]*nertag_size
+#         ner_vec[ner_index]=1.0
+#         extra += pos_vec+ner_vec
+
+        extralist.append(extra)
+    return extralist
+
 def load_squad_cnn_rank_span_train(word2id, char2id, p_len_limit, q_len_limit, char_len):
     readfile=open(path+'train-TwoStageRanking-SpanLevel.txt', 'r')
 
@@ -3286,6 +3418,8 @@ def load_squad_cnn_rank_span_word_train(word2id, char2id, p_len_limit, q_len_lim
     char_q_masks=[]
     char_p_masks=[]
 
+    para_extras=[]
+
     span_labels=[]
     word_labels=[]
     line_co=0
@@ -3296,12 +3430,23 @@ def load_squad_cnn_rank_span_word_train(word2id, char2id, p_len_limit, q_len_lim
         label = int(parts[2])
         start_label = int(parts[3])
         end_label = int(parts[4])
-        
-        
-        q_idlist, q_mask=transfer_wordlist_2_idlist_with_maxlen(question_wordlist, word2id, q_len_limit)
-        p_idlist, p_mask=transfer_wordlist_2_idlist_with_maxlen(para_wordlist, word2id, p_len_limit)
-        q_char_idlist, q_char_mask = wordList_2_charIdList(question_wordlist, q_len_limit, char_len, char2id)
-        p_char_idlist, p_char_mask = wordList_2_charIdList(para_wordlist, p_len_limit, char_len, char2id)
+        if question_wordlist[-1]=='?':
+            question_wordlist=question_wordlist[:-1]
+
+
+
+#         q_idlist, q_mask=transfer_wordlist_2_idlist_with_maxlen(question_wordlist, word2id, q_len_limit)
+#         p_idlist, p_mask=transfer_wordlist_2_idlist_with_maxlen(para_wordlist, word2id, p_len_limit)
+        #transfer_wordlist_2_idlist_with_maxlen_return_wordlist
+        q_idlist, q_mask, trunc_q=transfer_wordlist_2_idlist_with_maxlen_return_wordlist(question_wordlist, word2id, q_len_limit)
+        p_idlist, p_mask, trunc_p=transfer_wordlist_2_idlist_with_maxlen_return_wordlist(para_wordlist, word2id, p_len_limit)
+        q_char_idlist, q_char_mask = wordList_to_charIdList(trunc_q, char_len, char2id)
+        p_char_idlist, p_char_mask = wordList_to_charIdList(trunc_p, char_len, char2id)
+
+        p_extra =  wordlist_2_extralist(trunc_p, question_wordlist)
+#         print 'p_extra:', p_extra
+#         exit(0)
+
         questions.append(q_idlist)
         paragraphs.append(p_idlist)
         q_masks.append(q_mask)
@@ -3312,11 +3457,14 @@ def load_squad_cnn_rank_span_word_train(word2id, char2id, p_len_limit, q_len_lim
         char_q_masks.append(q_char_mask)
         char_p_masks.append(p_char_mask)
 
+        para_extras.append(p_extra)
         span_labels.append(label)
         word_labels.append([start_label, end_label])
         line_co+=1
+        if line_co%10000==0:
+            print line_co, '...'
     print 'load train over, ', line_co, ' question-para pairs'
-    return     questions,paragraphs,q_masks,p_masks,char_questions, char_paragraphs, char_q_masks,char_p_masks, span_labels, word_labels, word2id, char2id
+    return     questions,paragraphs,q_masks,p_masks,char_questions, char_paragraphs, char_q_masks,char_p_masks, span_labels, word_labels, para_extras,word2id, char2id
 
 def load_squad_cnn_rank_span_dev(word2id, char2id, p_len_limit, q_len_limit, char_len):
     readfile=open(path+'dev-TwoStageRanking-SpanLevel.txt', 'r')
@@ -3457,6 +3605,8 @@ def load_squad_cnn_rank_span_word_dev(word2id, char2id, p_len_limit, q_len_limit
     char_q_masks=[]
     char_p_masks=[]
 
+    para_extras=[]
+
     q_ids=[] #used to store question ids
     line_co=0
     for line in readfile:
@@ -3464,17 +3614,28 @@ def load_squad_cnn_rank_span_word_dev(word2id, char2id, p_len_limit, q_len_limit
         q_id = parts[0]
         question_wordlist=parts[1].split()
         para_wordlist=parts[2].split()
+        if question_wordlist[-1]=='?':
+            question_wordlist=question_wordlist[:-1]
 
-        q_idlist, q_mask=transfer_wordlist_2_idlist_with_maxlen(question_wordlist, word2id, q_len_limit)
-        p_idlist, p_mask=transfer_wordlist_2_idlist_with_maxlen(para_wordlist, word2id, p_len_limit)
 
-        q_char_idlist, q_char_mask = wordList_2_charIdList(question_wordlist, q_len_limit, char_len, char2id)
-        p_char_idlist, p_char_mask = wordList_2_charIdList(para_wordlist, p_len_limit, char_len, char2id)
+#         q_idlist, q_mask=transfer_wordlist_2_idlist_with_maxlen(question_wordlist, word2id, q_len_limit)
+#         p_idlist, p_mask=transfer_wordlist_2_idlist_with_maxlen(para_wordlist, word2id, p_len_limit)
+#
+#         q_char_idlist, q_char_mask = wordList_2_charIdList(question_wordlist, q_len_limit, char_len, char2id)
+#         p_char_idlist, p_char_mask = wordList_2_charIdList(para_wordlist, p_len_limit, char_len, char2id)
 
-        if p_len_limit > len(para_wordlist):
-            para_wordlists.append(['UNK']*(p_len_limit - len(para_wordlist))+para_wordlist)
-        else:
-            para_wordlists.append(para_wordlist[:p_len_limit])
+        q_idlist, q_mask, trunc_q=transfer_wordlist_2_idlist_with_maxlen_return_wordlist(question_wordlist, word2id, q_len_limit)
+        p_idlist, p_mask, trunc_p=transfer_wordlist_2_idlist_with_maxlen_return_wordlist(para_wordlist, word2id, p_len_limit)
+        q_char_idlist, q_char_mask = wordList_to_charIdList(trunc_q, char_len, char2id)
+        p_char_idlist, p_char_mask = wordList_to_charIdList(trunc_p, char_len, char2id)
+
+        p_extra =  wordlist_2_extralist(trunc_p, question_wordlist)
+
+#         if p_len_limit > len(para_wordlist):
+#             para_wordlists.append(['UNK']*(p_len_limit - len(para_wordlist))+para_wordlist)
+#         else:
+#             para_wordlists.append(para_wordlist[:p_len_limit])
+        para_wordlists.append(trunc_p)
 
         questions.append(q_idlist)
         paragraphs.append(p_idlist)
@@ -3486,10 +3647,14 @@ def load_squad_cnn_rank_span_word_dev(word2id, char2id, p_len_limit, q_len_limit
         char_q_masks.append(q_char_mask)
         char_p_masks.append(p_char_mask)
 
+        para_extras.append(p_extra)
+
         q_ids.append(q_id)
         line_co+=1
+        if line_co%3000==0:
+            print line_co, '...'
     print 'load dev over, ', line_co, ' question-sent pairs'
-    return     questions,paragraphs,q_masks,p_masks,char_questions, char_paragraphs, char_q_masks,char_p_masks, q_ids, word2id, char2id, para_wordlists
+    return     questions,paragraphs,q_masks,p_masks,char_questions, char_paragraphs, char_q_masks,char_p_masks, q_ids, para_extras, word2id, char2id, para_wordlists
 
 if __name__ == '__main__':
 #     store_SQUAD_train()

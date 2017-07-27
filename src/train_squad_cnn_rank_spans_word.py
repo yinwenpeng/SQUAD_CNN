@@ -24,6 +24,8 @@ from utils_pg import *
 from evaluate import standard_eval
 import codecs
 import json
+import pickle
+from six.moves import cPickle
 
 
 
@@ -33,14 +35,24 @@ import json
 1, concatenate different CNN layers, then classify
 2, dev not only top1, can top2 if two sentences are adjacent
 3, classify words into two classes: BIO
-4, mask for spans
-5, span rep consider maxpooling, left, right, sum; question considered maxpooling, left, right
+4, mask for spans -- work a little
+5, span rep consider maxpooling, left, right, sum; question considered maxpooling, left, right -- work
+6, classify word into distance to answer 0-10 and 11 for all, then in test each word has score 11-class
+7, fake questions: in training, we compare ground answer span with question to 0-1; in test, no fake questions, to rank span with question via prob of 1
+8, add POS, NER tags as embeddings
+9, word shape, 2019 - 0000
+10, use sum in ranking loss, not mean, then divide by batch_size
+11, add more CNN layers, more HL layers
+12, add dropout, batch norm, layer norm, div_reg
+13, attention, different question reps for different words/spans
+14, forward both CNN input and output to the next CNN layer
+15, consider the consistency of extra cross span words
 '''
 
-def evaluate_lenet5(learning_rate=0.01, n_epochs=3, batch_size=50, emb_size=300, char_emb_size=20, hidden_size=300,
-                    L2_weight=0.0001, p_len_limit=400, test_p_len_limit=100, q_len_limit=20, char_len=15, filter_size = [5,5,5],
-                    char_filter_size=5, margin=0.85, comment = 'span has sum, no span mask finally'):
-    test_batch_size=batch_size*20
+def evaluate_lenet5(learning_rate=0.01, n_epochs=100, batch_size=100, emb_size=300, char_emb_size=20, hidden_size=10,
+                    L2_weight=0.0001, p_len_limit=400, test_p_len_limit=100, q_len_limit=20, char_len=15, filter_size = [5,5,5,5,5],
+                    char_filter_size=5, margin=0.85, extra_size=5+22, extra_emb = 20, comment = 'add co times'): #extra_size=3+46+7
+    test_batch_size=batch_size
     model_options = locals().copy()
     print "model options", model_options
     rootPath='/mounts/data/proj/wenpeng/Dataset/SQuAD/';
@@ -49,11 +61,28 @@ def evaluate_lenet5(learning_rate=0.01, n_epochs=3, batch_size=50, emb_size=300,
 
     word2id={}
     char2id={}
-    #questions,paragraphs,q_masks,p_masks,labels, word2id
-    train_Q_list,train_para_list, train_Q_mask, train_para_mask, train_Q_char_list,train_para_char_list, train_Q_char_mask, train_para_char_mask, train_span_label_list, train_word_label_list, word2id, char2id=load_squad_cnn_rank_span_word_train(word2id, char2id, p_len_limit, q_len_limit, char_len)
+ 
+    train_Q_list,train_para_list, train_Q_mask, train_para_mask, train_Q_char_list,train_para_char_list, train_Q_char_mask, train_para_char_mask, train_span_label_list, train_word_label_list, train_para_extras, word2id, char2id=load_squad_cnn_rank_span_word_train(word2id, char2id, p_len_limit, q_len_limit, char_len)
+    test_Q_list, test_para_list,  test_Q_mask, test_para_mask,test_Q_char_list, test_para_char_list,  test_Q_char_mask, test_para_char_mask, q_idlist, test_para_extras, word2id, char2id, test_para_wordlist_list = load_squad_cnn_rank_span_word_dev(word2id, char2id, test_p_len_limit, q_len_limit, char_len)
+    '''
+    #store variables into file
+    '''
+#     train_variables = [train_Q_list,train_para_list, train_Q_mask, train_para_mask, train_Q_char_list,train_para_char_list, train_Q_char_mask, train_para_char_mask, train_span_label_list, train_word_label_list, train_para_extras]
+#     test_variables =[test_Q_list, test_para_list,  test_Q_mask, test_para_mask,test_Q_char_list, test_para_char_list,  test_Q_char_mask, test_para_char_mask, q_idlist, test_para_extras, word2id, char2id, test_para_wordlist_list]
+#     with open(rootPath+'extra.3.pickle', 'wb') as f:  # Python 3: open(..., 'wb')
+#         cPickle.dump(train_variables+test_variables, f, protocol=cPickle.HIGHEST_PROTOCOL)
+#     f.close()
+#     print 'variable stored successfully'
+#     exit(0)
+    '''
+    load variables from file
+    '''
+#     before_load_time = time.time()
+#     with open(rootPath+'extra.3.pickle', 'rb') as f:  # Python 3: open(..., 'rb')
+#         train_Q_list,train_para_list, train_Q_mask, train_para_mask, train_Q_char_list,train_para_char_list, train_Q_char_mask, train_para_char_mask, train_span_label_list, train_word_label_list, train_para_extras,test_Q_list, test_para_list,  test_Q_mask, test_para_mask,test_Q_char_list, test_para_char_list,  test_Q_char_mask, test_para_char_mask, q_idlist, test_para_extras, word2id, char2id, test_para_wordlist_list = cPickle.load(f)
+#     f.close()
+#     print 'load data variables successfully, spend: ',     (time.time()-before_load_time)/60.0, ' mins'
     train_size=len(train_para_list)
-
-    test_Q_list, test_para_list,  test_Q_mask, test_para_mask,test_Q_char_list, test_para_char_list,  test_Q_char_mask, test_para_char_mask, q_idlist, word2id, char2id, test_para_wordlist_list= load_squad_cnn_rank_span_word_dev(word2id, char2id, test_p_len_limit, q_len_limit, char_len)
     test_size=len(test_para_list)
 
     train_Q_list = numpy.asarray(train_Q_list, dtype='int32')
@@ -65,6 +94,8 @@ def evaluate_lenet5(learning_rate=0.01, n_epochs=3, batch_size=50, emb_size=300,
     train_para_char_list = numpy.asarray(train_para_char_list, dtype='int32')
     train_Q_char_mask = numpy.asarray(train_Q_char_mask, dtype=theano.config.floatX)
     train_para_char_mask = numpy.asarray(train_para_char_mask, dtype=theano.config.floatX)
+
+    train_para_extras = numpy.asarray(train_para_extras, dtype=theano.config.floatX)
 
     train_span_label_list = numpy.asarray(train_span_label_list, dtype='int32')
     train_word_label_list = numpy.asarray(train_word_label_list, dtype='int32')
@@ -78,6 +109,8 @@ def evaluate_lenet5(learning_rate=0.01, n_epochs=3, batch_size=50, emb_size=300,
     test_para_char_list = numpy.asarray(test_para_char_list, dtype='int32')
     test_Q_char_mask = numpy.asarray(test_Q_char_mask, dtype=theano.config.floatX)
     test_para_char_mask = numpy.asarray(test_para_char_mask, dtype=theano.config.floatX)
+
+    test_para_extras = numpy.asarray(test_para_extras, dtype=theano.config.floatX)
 
 
 
@@ -95,6 +128,8 @@ def evaluate_lenet5(learning_rate=0.01, n_epochs=3, batch_size=50, emb_size=300,
     char_rand_values=random_value_normal((char_size+1, char_emb_size), theano.config.floatX, rng)
     char_embeddings=theano.shared(value=char_rand_values, borrow=True)
 
+    extra_rand_values=random_value_normal((extra_size, extra_emb), theano.config.floatX, rng)
+    extra_embeddings=theano.shared(value=extra_rand_values, borrow=True)
 
     # allocate symbolic variables for the data
 #     index = T.lscalar()
@@ -105,6 +140,8 @@ def evaluate_lenet5(learning_rate=0.01, n_epochs=3, batch_size=50, emb_size=300,
     ans_indices = T.ivector() # for one batch, the length is dynamic
     para_mask=T.fmatrix('para_mask')
     q_mask=T.fmatrix('q_mask')
+
+    extra = T.ftensor3()  #(batch, p_len, 3)
 
     char_paragraph = T.imatrix() #(batch, char_len*p_len)
     char_questions = T.imatrix()
@@ -121,6 +158,8 @@ def evaluate_lenet5(learning_rate=0.01, n_epochs=3, batch_size=50, emb_size=300,
     print '... building the model'
 
     true_batch_size = paragraph.shape[0]
+    
+    extra_rep_batch = T.concatenate([extra.dot(extra_embeddings), extra], axis=2) #(batch, p_len, extra_emb+extra_size)
 
     common_input_p=embeddings[paragraph.flatten()].reshape((true_batch_size,true_p_len, emb_size)) #the input format can be adapted into CNN or GRU or LSTM
     common_input_q=embeddings[questions.flatten()].reshape((true_batch_size,q_len_limit, emb_size))
@@ -133,26 +172,38 @@ def evaluate_lenet5(learning_rate=0.01, n_epochs=3, batch_size=50, emb_size=300,
     char_q_masks = char_q_mask.reshape((true_batch_size*q_len_limit, char_len))
 
     conv_W_char, conv_b_char=create_conv_para(rng, filter_shape=(char_emb_size, 1, char_emb_size, char_filter_size))
-    conv_W_1, conv_b_1=create_conv_para(rng, filter_shape=(hidden_size, 1, emb_size+char_emb_size, filter_size[0]))
+    conv_W_1, conv_b_1=create_conv_para(rng, filter_shape=(hidden_size, 1, emb_size+char_emb_size+extra_emb+extra_size, filter_size[0]))
     conv_W_2, conv_b_2=create_conv_para(rng, filter_shape=(hidden_size, 1, hidden_size, filter_size[1]))
     conv_W_3, conv_b_3=create_conv_para(rng, filter_shape=(hidden_size, 1, hidden_size, filter_size[2]))
+#     conv_W_4, conv_b_4=create_conv_para(rng, filter_shape=(hidden_size, 1, hidden_size, filter_size[3]))
+#     conv_W_5, conv_b_5=create_conv_para(rng, filter_shape=(hidden_size, 1, hidden_size, filter_size[4]))
 
     conv_W_1_q, conv_b_1_q=create_conv_para(rng, filter_shape=(hidden_size, 1, emb_size+char_emb_size, filter_size[0]))
     conv_W_2_q, conv_b_2_q=create_conv_para(rng, filter_shape=(hidden_size, 1, hidden_size, filter_size[1]))
     conv_W_3_q, conv_b_3_q=create_conv_para(rng, filter_shape=(hidden_size, 1, hidden_size, filter_size[2]))
-    NN_para=[conv_W_1, conv_b_1,conv_W_2, conv_b_2,conv_W_1_q, conv_b_1_q, conv_W_2_q, conv_b_2_q, conv_W_3, conv_b_3, conv_W_3_q, conv_b_3_q, conv_W_char, conv_b_char]
+#     conv_W_4_q, conv_b_4_q=create_conv_para(rng, filter_shape=(hidden_size, 1, hidden_size, filter_size[3]))
+#     conv_W_5_q, conv_b_5_q=create_conv_para(rng, filter_shape=(hidden_size, 1, hidden_size, filter_size[4]))
+    CNN_para=[conv_W_1, conv_b_1,conv_W_2, conv_b_2,conv_W_1_q, conv_b_1_q, conv_W_2_q, conv_b_2_q, conv_W_3, conv_b_3, conv_W_3_q, conv_b_3_q,
+#              conv_W_4, conv_b_4, conv_W_5, conv_b_5,conv_W_4_q, conv_b_4_q, conv_W_5_q, conv_b_5_q,
+             conv_W_char, conv_b_char]
 
-    span_input4score, word_input4score = squad_cnn_rank_spans_word(rng, common_input_p, common_input_q, char_common_input_p, char_common_input_q,batch_size, p_len_limit,q_len_limit,
+    span_input4score, word_input4score, overall_span_hidden_size,overall_word_hidden_size = squad_cnn_rank_spans_word(rng, common_input_p, common_input_q, char_common_input_p, char_common_input_q,batch_size, p_len_limit,q_len_limit,
                          emb_size, char_emb_size,char_len,filter_size,char_filter_size,hidden_size,
                          conv_W_1, conv_b_1,conv_W_2, conv_b_2,conv_W_1_q, conv_b_1_q, conv_W_2_q, conv_b_2_q,conv_W_char,conv_b_char,
                         conv_W_3, conv_b_3, conv_W_3_q, conv_b_3_q,
-                         para_mask, q_mask, char_p_masks,char_q_masks)
+#                         conv_W_4, conv_b_4, conv_W_4_q, conv_b_4_q,
+#                         conv_W_5, conv_b_5, conv_W_5_q, conv_b_5_q,
+                         para_mask, q_mask, char_p_masks,char_q_masks,
+                         extra_rep_batch,extra_emb+extra_size)
 
-    test_span_input4score, test_word_input4score = squad_cnn_rank_spans_word(rng, common_input_p, common_input_q, char_common_input_p, char_common_input_q,test_batch_size, test_p_len_limit,q_len_limit,
+    test_span_input4score, test_word_input4score, _,_ = squad_cnn_rank_spans_word(rng, common_input_p, common_input_q, char_common_input_p, char_common_input_q,test_batch_size, test_p_len_limit,q_len_limit,
                          emb_size, char_emb_size,char_len,filter_size,char_filter_size,hidden_size,
                          conv_W_1, conv_b_1,conv_W_2, conv_b_2, conv_W_1_q, conv_b_1_q, conv_W_2_q, conv_b_2_q,conv_W_char,conv_b_char,
                         conv_W_3, conv_b_3, conv_W_3_q, conv_b_3_q,
-                         para_mask, q_mask, char_p_masks,char_q_masks)  #(batch, hidden, gram_size)
+#                         conv_W_4, conv_b_4, conv_W_4_q, conv_b_4_q,
+#                         conv_W_5, conv_b_5, conv_W_5_q, conv_b_5_q,
+                         para_mask, q_mask, char_p_masks,char_q_masks,
+                         extra_rep_batch,extra_emb+extra_size)  #(batch, hidden, gram_size)
 
     gram_size = 5*true_p_len-(0+1+2+3+4)
 
@@ -160,11 +211,11 @@ def evaluate_lenet5(learning_rate=0.01, n_epochs=3, batch_size=50, emb_size=300,
 #     norm_U_a=normalize_matrix(U_a)
 #     span_scores_matrix=T.dot(span_input4score.dimshuffle(0,2,1), norm_U_a).reshape((batch_size, gram_size))  #(batch, 13*para_len-78, 1)
 
-    span_HL_1_para = create_ensemble_para(rng, hidden_size, 5*hidden_size)
+    span_HL_1_para = create_ensemble_para(rng, hidden_size, overall_span_hidden_size)
     span_HL_2_para = create_ensemble_para(rng, hidden_size, hidden_size)
     span_HL_3_para = create_ensemble_para(rng, hidden_size, hidden_size)
     span_HL_4_para = create_ensemble_para(rng, hidden_size, hidden_size)
-    span_U_a = create_ensemble_para(rng, 1, hidden_size)
+    span_U_a = create_ensemble_para(rng, 1, hidden_size+overall_span_hidden_size)
     norm_span_U_a=normalize_matrix(span_U_a)
     norm_span_HL_1_para=normalize_matrix(span_HL_1_para)
     norm_span_HL_2_para=normalize_matrix(span_HL_2_para)
@@ -198,22 +249,22 @@ def evaluate_lenet5(learning_rate=0.01, n_epochs=3, batch_size=50, emb_size=300,
 
 
     #word
-    HL_1_para = create_ensemble_para(rng, hidden_size, 2*hidden_size)
+    HL_1_para = create_ensemble_para(rng, hidden_size, overall_word_hidden_size)
     HL_2_para = create_ensemble_para(rng, hidden_size, hidden_size)
     HL_3_para = create_ensemble_para(rng, hidden_size, hidden_size)
     HL_4_para = create_ensemble_para(rng, hidden_size, hidden_size)
-    start_U_a = create_ensemble_para(rng, 1, hidden_size)
+    start_U_a = create_ensemble_para(rng, 1, hidden_size+overall_word_hidden_size)
     norm_start_U_a=normalize_matrix(start_U_a)
     norm_HL_1_para=normalize_matrix(HL_1_para)
     norm_HL_2_para=normalize_matrix(HL_2_para)
     norm_HL_3_para=normalize_matrix(HL_3_para)
     norm_HL_4_para=normalize_matrix(HL_4_para)
 
-    end_HL_1_para = create_ensemble_para(rng, hidden_size, 2*hidden_size)
+    end_HL_1_para = create_ensemble_para(rng, hidden_size, overall_word_hidden_size)
     end_HL_2_para = create_ensemble_para(rng, hidden_size, hidden_size)
     end_HL_3_para = create_ensemble_para(rng, hidden_size, hidden_size)
     end_HL_4_para = create_ensemble_para(rng, hidden_size, hidden_size)
-    end_U_a = create_ensemble_para(rng, 1, hidden_size)
+    end_U_a = create_ensemble_para(rng, 1, hidden_size+overall_word_hidden_size)
     end_norm_U_a=normalize_matrix(end_U_a)
     end_norm_HL_1_para=normalize_matrix(end_HL_1_para)
     end_norm_HL_2_para=normalize_matrix(end_HL_2_para)
@@ -265,11 +316,11 @@ def evaluate_lenet5(learning_rate=0.01, n_epochs=3, batch_size=50, emb_size=300,
 
 
     #ans words train
-    ans_HL_1_para = create_ensemble_para(rng, hidden_size, 2*hidden_size)
+    ans_HL_1_para = create_ensemble_para(rng, hidden_size, overall_word_hidden_size)
     ans_HL_2_para = create_ensemble_para(rng, hidden_size, hidden_size)
     ans_HL_3_para = create_ensemble_para(rng, hidden_size, hidden_size)
     ans_HL_4_para = create_ensemble_para(rng, hidden_size, hidden_size)
-    ans_U_a = create_ensemble_para(rng, 1, hidden_size)
+    ans_U_a = create_ensemble_para(rng, 1, hidden_size+overall_word_hidden_size)
     norm_ans_U_a=normalize_matrix(ans_U_a)
     norm_ans_HL_1_para=normalize_matrix(ans_HL_1_para)
     norm_ans_HL_2_para=normalize_matrix(ans_HL_2_para)
@@ -302,7 +353,7 @@ def evaluate_lenet5(learning_rate=0.01, n_epochs=3, batch_size=50, emb_size=300,
     '''
     form test spans and masks
     '''
-    test_span_word_scores_matrix=test_span_scores_matrix+word_pair_scores+ans_word_scores
+    test_span_word_scores_matrix=word_pair_scores+ans_word_scores#test_span_scores_matrix+
     test_spans_mask_1 = para_mask
     test_spans_mask_2 = para_mask[:,:-1] * para_mask[:,1:] #(batch* hidden_size, maxsenlen-1)
     test_spans_mask_3 = para_mask[:,:-2] * para_mask[:,1:-1] * para_mask[:,2:] #(batch* hidden_size, maxsenlen-2)
@@ -313,17 +364,24 @@ def evaluate_lenet5(learning_rate=0.01, n_epochs=3, batch_size=50, emb_size=300,
     test_return = T.argmax(test_span_word_scores_matrix*test_spans_mask, axis=1) #batch
 
 #     params = [embeddings,char_embeddings]+NN_para+[U_a]
-    params = [embeddings,char_embeddings]+NN_para+[span_U_a,span_HL_1_para,span_HL_2_para,span_HL_3_para,span_HL_4_para]+[start_U_a, HL_1_para,HL_2_para,HL_3_para,HL_4_para]+[end_U_a,end_HL_1_para,end_HL_2_para,end_HL_3_para,end_HL_4_para]+[ans_U_a,ans_HL_1_para,ans_HL_2_para,ans_HL_3_para,ans_HL_4_para]
+    params = ([embeddings,char_embeddings,extra_embeddings]
+              +CNN_para
+#               +[span_U_a,span_HL_1_para,span_HL_2_para,span_HL_3_para,span_HL_4_para]
+              +[start_U_a, HL_1_para,HL_2_para,HL_3_para,HL_4_para]
+              +[end_U_a,end_HL_1_para,end_HL_2_para,end_HL_3_para,end_HL_4_para]
+              +[ans_U_a,ans_HL_1_para,ans_HL_2_para,ans_HL_3_para,ans_HL_4_para]
+              )
 
-    L2_reg =L2norm_paraList([embeddings,char_embeddings,
+    L2_reg =L2norm_paraList([embeddings,char_embeddings,extra_embeddings,
     conv_W_1,conv_W_2,conv_W_1_q, conv_W_2_q, conv_W_char, conv_W_3, conv_W_3_q,
-    span_U_a,span_HL_1_para,span_HL_2_para,span_HL_3_para,span_HL_4_para,
+#     conv_W_4, conv_W_5,conv_W_4_q, conv_W_5_q,
+#     span_U_a,span_HL_1_para,span_HL_2_para,span_HL_3_para,span_HL_4_para,
     start_U_a, HL_1_para,HL_2_para,HL_3_para,HL_4_para,
     end_U_a,end_HL_1_para,end_HL_2_para,end_HL_3_para,end_HL_4_para,
     ans_U_a,ans_HL_1_para,ans_HL_2_para,ans_HL_3_para,ans_HL_4_para
     ])
     #L2_reg = L2norm_paraList(params)
-    cost=span_loss+word_loss+ans_loss+L2_weight*L2_reg
+    cost=word_loss+ans_loss+L2_weight*L2_reg#span_loss+
 
 
     accumulator=[]
@@ -343,15 +401,17 @@ def evaluate_lenet5(learning_rate=0.01, n_epochs=3, batch_size=50, emb_size=300,
 
 #     updates=Adam(cost, params, lr=0.0001)
 
-    train_model = theano.function([paragraph, questions,span_indices, word_indices,ans_indices, para_mask, q_mask,    char_paragraph, #(batch, char_len*p_len)
-        char_questions, char_para_mask, char_q_mask, true_p_len], cost, updates=updates,on_unused_input='ignore')
+    train_model = theano.function([paragraph, questions,span_indices, word_indices,ans_indices, para_mask, q_mask,
+                                   extra,
+                                   char_paragraph,char_questions, char_para_mask, char_q_mask, true_p_len], cost, updates=updates,on_unused_input='ignore')
 
     test_model = theano.function([paragraph, questions,para_mask, q_mask,
-        char_paragraph,
-        char_questions,
-        char_para_mask,
-        char_q_mask,
-                true_p_len], test_return, on_unused_input='ignore')
+                                  extra,
+                                    char_paragraph,
+                                    char_questions,
+                                    char_para_mask,
+                                    char_q_mask,
+                                    true_p_len], test_return, on_unused_input='ignore')
 
 
 
@@ -393,7 +453,7 @@ def evaluate_lenet5(learning_rate=0.01, n_epochs=3, batch_size=50, emb_size=300,
     while (epoch < n_epochs) and (not done_looping):
         epoch = epoch + 1
 
-        random.shuffle(train_ids)
+        random.Random(4).shuffle(train_ids)
         iter_accu=0
         for para_id in train_batch_start:
             # iter means how many batches have been runed, taking into loop
@@ -416,6 +476,7 @@ def evaluate_lenet5(learning_rate=0.01, n_epochs=3, batch_size=50, emb_size=300,
                                  ans_label_list,
                                  train_para_mask[train_id_batch],
                                  train_Q_mask[train_id_batch],
+                                 train_para_extras[train_id_batch],
                                  train_para_char_list[train_id_batch],
                                  train_Q_char_list[train_id_batch],
                                  train_para_char_mask[train_id_batch],
@@ -424,7 +485,7 @@ def evaluate_lenet5(learning_rate=0.01, n_epochs=3, batch_size=50, emb_size=300,
 
 
             #print iter
-            if iter%200==0:
+            if iter%100==0:
                 print 'Epoch ', epoch, 'iter '+str(iter)+' average cost: '+str(cost_i/iter), 'uses ', (time.time()-past_time)/60.0, 'min'
                 print 'Testing...'
                 past_time = time.time()
@@ -436,6 +497,7 @@ def evaluate_lenet5(learning_rate=0.01, n_epochs=3, batch_size=50, emb_size=300,
                                                  test_Q_list[test_para_id:test_para_id+test_batch_size],
                                                  test_para_mask[test_para_id:test_para_id+test_batch_size],
                                                  test_Q_mask[test_para_id:test_para_id+test_batch_size],
+                                                 test_para_extras[test_para_id:test_para_id+test_batch_size],
                                                  test_para_char_list[test_para_id:test_para_id+test_batch_size],
                                                  test_Q_char_list[test_para_id:test_para_id+test_batch_size],
                                                  test_para_char_mask[test_para_id:test_para_id+test_batch_size],
@@ -496,7 +558,7 @@ learning_rate=0.01, n_epochs=3, batch_size=100, emb_size=300, char_emb_size=20, 
 #     lr_list=[0.01,0.005,0.001,0.02,0.03,0.05]
 #     hidden_list=[300,250,200,150,350,400]
 #     batch_list=[100,80,60,40,120,150]
-# 
+#
 #     best_acc=0.0
 #     best_lr=0.01
 #     for lr in lr_list:
@@ -505,7 +567,7 @@ learning_rate=0.01, n_epochs=3, batch_size=100, emb_size=300, char_emb_size=20, 
 #             best_lr=lr
 #             best_acc=acc_test
 #         print '\t\t\t\tcurrent best_acc:', best_acc
-# 
+#
 #     best_hidden=300
 #     for hidden in hidden_list:
 #         acc_test= evaluate_lenet5(learning_rate=best_lr, hidden_size=hidden)
@@ -513,7 +575,7 @@ learning_rate=0.01, n_epochs=3, batch_size=100, emb_size=300, char_emb_size=20, 
 #             best_hidden=hidden
 #             best_acc=acc_test
 #         print '\t\t\t\tcurrent best_acc:', best_acc
-# 
+#
 #     best_batch=100
 #     for batch in batch_list:
 #         acc_test= evaluate_lenet5(learning_rate=best_lr,  hidden_size=best_hidden,   batch_size=batch)
