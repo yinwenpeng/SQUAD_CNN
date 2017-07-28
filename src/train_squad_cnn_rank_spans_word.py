@@ -47,6 +47,8 @@ from six.moves import cPickle
 13, attention, different question reps for different words/spans
 14, forward both CNN input and output to the next CNN layer
 15, consider the consistency of extra cross span words
+16, if this word is just behind the wh words, qtype has separate emb matrix
+max exact_acc: 41.9110690634
 '''
 
 def evaluate_lenet5(learning_rate=0.01, n_epochs=100, batch_size=100, emb_size=300, char_emb_size=20, hidden_size=10,
@@ -61,7 +63,7 @@ def evaluate_lenet5(learning_rate=0.01, n_epochs=100, batch_size=100, emb_size=3
 
     word2id={}
     char2id={}
- 
+
     train_Q_list,train_para_list, train_Q_mask, train_para_mask, train_Q_char_list,train_para_char_list, train_Q_char_mask, train_para_char_mask, train_span_label_list, train_word_label_list, train_para_extras, word2id, char2id=load_squad_cnn_rank_span_word_train(word2id, char2id, p_len_limit, q_len_limit, char_len)
     test_Q_list, test_para_list,  test_Q_mask, test_para_mask,test_Q_char_list, test_para_char_list,  test_Q_char_mask, test_para_char_mask, q_idlist, test_para_extras, word2id, char2id, test_para_wordlist_list = load_squad_cnn_rank_span_word_dev(word2id, char2id, test_p_len_limit, q_len_limit, char_len)
     '''
@@ -158,8 +160,19 @@ def evaluate_lenet5(learning_rate=0.01, n_epochs=100, batch_size=100, emb_size=3
     print '... building the model'
 
     true_batch_size = paragraph.shape[0]
-    
+
     extra_rep_batch = T.concatenate([extra.dot(extra_embeddings), extra], axis=2) #(batch, p_len, extra_emb+extra_size)
+    zero_pad = T.zeros((true_batch_size,1,extra_emb+extra_size))
+    left_context = T.concatenate([zero_pad, extra_rep_batch[:,:-1,:]], axis=1) #(batch, p_len, extra_emb+extra_size)
+    right_context = T.concatenate([extra_rep_batch[:,1:,:], zero_pad], axis=1) #(batch, p_len, extra_emb+extra_size)
+
+    left_context_2 = T.concatenate([zero_pad, zero_pad, extra_rep_batch[:,:-2,:]], axis=1) #(batch, p_len, extra_emb+extra_size)
+    right_context_2 = T.concatenate([extra_rep_batch[:,2:,:], zero_pad,zero_pad], axis=1) #(batch, p_len, extra_emb+extra_size)
+
+
+    extra_rep_batch = T.concatenate([extra_rep_batch, left_context,right_context,left_context_2,right_context_2], axis=2) #batch, p_len, 3*(extra_emb+extra_size))
+    true_extra_size = 5*(extra_emb+extra_size)
+
 
     common_input_p=embeddings[paragraph.flatten()].reshape((true_batch_size,true_p_len, emb_size)) #the input format can be adapted into CNN or GRU or LSTM
     common_input_q=embeddings[questions.flatten()].reshape((true_batch_size,q_len_limit, emb_size))
@@ -172,7 +185,7 @@ def evaluate_lenet5(learning_rate=0.01, n_epochs=100, batch_size=100, emb_size=3
     char_q_masks = char_q_mask.reshape((true_batch_size*q_len_limit, char_len))
 
     conv_W_char, conv_b_char=create_conv_para(rng, filter_shape=(char_emb_size, 1, char_emb_size, char_filter_size))
-    conv_W_1, conv_b_1=create_conv_para(rng, filter_shape=(hidden_size, 1, emb_size+char_emb_size+extra_emb+extra_size, filter_size[0]))
+    conv_W_1, conv_b_1=create_conv_para(rng, filter_shape=(hidden_size, 1, emb_size+char_emb_size+true_extra_size, filter_size[0]))
     conv_W_2, conv_b_2=create_conv_para(rng, filter_shape=(hidden_size, 1, hidden_size, filter_size[1]))
     conv_W_3, conv_b_3=create_conv_para(rng, filter_shape=(hidden_size, 1, hidden_size, filter_size[2]))
 #     conv_W_4, conv_b_4=create_conv_para(rng, filter_shape=(hidden_size, 1, hidden_size, filter_size[3]))
@@ -194,7 +207,7 @@ def evaluate_lenet5(learning_rate=0.01, n_epochs=100, batch_size=100, emb_size=3
 #                         conv_W_4, conv_b_4, conv_W_4_q, conv_b_4_q,
 #                         conv_W_5, conv_b_5, conv_W_5_q, conv_b_5_q,
                          para_mask, q_mask, char_p_masks,char_q_masks,
-                         extra_rep_batch,extra_emb+extra_size)
+                         extra_rep_batch,true_extra_size)
 
     test_span_input4score, test_word_input4score, _,_ = squad_cnn_rank_spans_word(rng, common_input_p, common_input_q, char_common_input_p, char_common_input_q,test_batch_size, test_p_len_limit,q_len_limit,
                          emb_size, char_emb_size,char_len,filter_size,char_filter_size,hidden_size,
@@ -203,7 +216,7 @@ def evaluate_lenet5(learning_rate=0.01, n_epochs=100, batch_size=100, emb_size=3
 #                         conv_W_4, conv_b_4, conv_W_4_q, conv_b_4_q,
 #                         conv_W_5, conv_b_5, conv_W_5_q, conv_b_5_q,
                          para_mask, q_mask, char_p_masks,char_q_masks,
-                         extra_rep_batch,extra_emb+extra_size)  #(batch, hidden, gram_size)
+                         extra_rep_batch, true_extra_size)  #(batch, hidden, gram_size)
 
     gram_size = 5*true_p_len-(0+1+2+3+4)
 
