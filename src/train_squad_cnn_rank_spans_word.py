@@ -18,7 +18,7 @@ from theano.tensor.signal import downsample
 from theano.tensor.nnet import conv
 from load_SQUAD import load_squad_cnn_rank_span_word_train, load_glove, decode_predict_id, load_squad_cnn_rank_span_word_dev, extract_ansList_attentionList, extract_ansList_attentionList_maxlen5, MacroF1, load_word2vec, load_word2vec_to_init
 from word2embeddings.nn.util import zero_value, random_value_normal
-from common_functions import squad_cnn_rank_spans_word,add_HLs_2_tensor3, load_model_from_file, store_model_to_file, create_LSTM_para, Bd_LSTM_Batch_Tensor_Input_with_Mask, Bd_GRU_Batch_Tensor_Input_with_Mask, create_ensemble_para, create_GRU_para, normalize_matrix, create_conv_para, Matrix_Bit_Shift, Conv_with_input_para, L2norm_paraList
+from common_functions import squad_cnn_rank_spans_word,add_HLs_2_tensor3, cosine_tensor3, store_model_to_file, create_LSTM_para, Bd_LSTM_Batch_Tensor_Input_with_Mask, Bd_GRU_Batch_Tensor_Input_with_Mask, create_ensemble_para, create_GRU_para, normalize_matrix, create_conv_para, Matrix_Bit_Shift, Conv_with_input_para, L2norm_paraList
 from random import shuffle
 from utils_pg import *
 from evaluate import standard_eval
@@ -53,7 +53,7 @@ max exact_acc: 41.9110690634
 
 def evaluate_lenet5(learning_rate=0.01, n_epochs=100, batch_size=100, emb_size=300, char_emb_size=20, hidden_size=10,
                     L2_weight=0.0001, p_len_limit=400, test_p_len_limit=100, q_len_limit=20, char_len=15, filter_size = [5,5,5,5,5],
-                    char_filter_size=5, margin=0.85, extra_size=5+22, extra_emb = 20, comment = 'add co times'): #extra_size=3+46+7
+                    char_filter_size=5, margin=0.85, extra_size=5+22, extra_emb = 10, comment = 'q head sum top 3 words emb'): #extra_size=3+46+7
     test_batch_size=batch_size
     model_options = locals().copy()
     print "model options", model_options
@@ -169,9 +169,14 @@ def evaluate_lenet5(learning_rate=0.01, n_epochs=100, batch_size=100, emb_size=3
     left_context_2 = T.concatenate([zero_pad, zero_pad, extra_rep_batch[:,:-2,:]], axis=1) #(batch, p_len, extra_emb+extra_size)
     right_context_2 = T.concatenate([extra_rep_batch[:,2:,:], zero_pad,zero_pad], axis=1) #(batch, p_len, extra_emb+extra_size)
 
-
-    extra_rep_batch = T.concatenate([extra_rep_batch, left_context,right_context,left_context_2,right_context_2], axis=2) #batch, p_len, 3*(extra_emb+extra_size))
-    true_extra_size = 5*(extra_emb+extra_size)
+    simi2left = T.sum(extra_rep_batch*left_context, axis=2).dimshuffle(0,1,'x') #(batch, p_len, 1)
+    simi2right = T.sum(extra_rep_batch*right_context, axis=2).dimshuffle(0,1,'x') #(batch, p_len, 1)
+    cos2left = cosine_tensor3(extra_rep_batch, left_context, 2).dimshuffle(0,1,'x')
+    cos2right = cosine_tensor3(extra_rep_batch, right_context, 2).dimshuffle(0,1,'x')
+    diff2left = extra_rep_batch - left_context
+    diff2right = extra_rep_batch - right_context  #(batch, p_len, extra_emb+extra_size)
+    extra_rep_batch = T.concatenate([extra_rep_batch, left_context,right_context,left_context_2,right_context_2, diff2left, diff2right,simi2left,simi2right, cos2left,cos2right], axis=2) #batch, p_len, 7*(extra_emb+extra_size)+4)
+    true_extra_size = 7*(extra_emb+extra_size)+4
 
 
     common_input_p=embeddings[paragraph.flatten()].reshape((true_batch_size,true_p_len, emb_size)) #the input format can be adapted into CNN or GRU or LSTM
@@ -466,7 +471,7 @@ def evaluate_lenet5(learning_rate=0.01, n_epochs=100, batch_size=100, emb_size=3
     while (epoch < n_epochs) and (not done_looping):
         epoch = epoch + 1
 
-        random.Random(4).shuffle(train_ids)
+        random.Random(200).shuffle(train_ids)
         iter_accu=0
         for para_id in train_batch_start:
             # iter means how many batches have been runed, taking into loop

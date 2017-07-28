@@ -21,6 +21,13 @@ def cosine_matrix1_matrix2_rowwise(M1, M2):
     norm1=T.sqrt(1e-20+T.sum(M1**2,axis=1)) #batch
     norm2=T.sqrt(1e-20+T.sum(M2**2,axis=1)) #batch
     return dot_prod/(norm1*norm2+1e-20)
+
+def cosine_tensor3(T1, T2, dim):
+    #for example dim=2
+    dot_prod = T.sum(T1*T2, axis=dim)
+    norm1 = T.sqrt(1e-20+T.sum(T1**2,axis=dim))
+    norm2 = T.sqrt(1e-20+T.sum(T2**2,axis=dim))
+    return dot_prod/(norm1*norm2+1e-20)
 def create_AttentionMatrix_para(rng, n_in, n_out):
 
     W1_values = numpy.asarray(rng.uniform(
@@ -2290,10 +2297,11 @@ def squad_cnn_rank_spans_word(rng, common_input_p, common_input_q, char_common_i
     #a_variable_casted = T.cast(a_variable, 'int32')
     q_head_indices = T.cast(-T.sum(q_mask, axis=1),'int32') #(batch)
     q_rep_tensor3 = conv_output_q_1+conv_output_q_2+conv_model_q_3.masked_conv_out#+conv_output_q_4+conv_model_q_5.masked_conv_out  #(batch, hidden, q_len)
-    q_heads = q_rep_tensor3[T.arange(batch_size),:,q_head_indices]  #(batch, hidden)
+    q_heads = T.concatenate([q_rep_tensor3[T.arange(batch_size),:,q_head_indices], conv_input_q_1[T.arange(batch_size),:,q_head_indices],conv_input_q_1[T.arange(batch_size),:,q_head_indices+1],conv_input_q_1[T.arange(batch_size),:,q_head_indices+2]], axis=1)  #(batch, hidden)
     q_tails = q_rep_tensor3[:,:,-1]  #(batch, hidden)
 
     q_rep_head_tail = T.concatenate([q_rep,q_heads,q_tails], axis=1) #(batch, 3*hidden)
+    q_hidden_size = 3*hidden_size+3*(emb_size+char_emb_size)
 
     conv_output_p_tensor3 = T.concatenate([conv_output_p_tensor3, conv_input_p_1], axis=1) #(batch, 3*hidden+emb+char_emb+extra_size, p_len)
     p_hidden_size = 3*hidden_size+emb_size+char_emb_size+extra_size
@@ -2345,8 +2353,8 @@ def squad_cnn_rank_spans_word(rng, common_input_p, common_input_q, char_common_i
 
     word_input4score = T.concatenate([conv_output_p_tensor3, T.repeat(q_rep_head_tail.dimshuffle(0,1,'x'), p_len_limit, axis=2)], axis=1)*para_mask.dimshuffle(0,'x',1) #(batch, p_hidden_size+3*hidden, p_len_limit)
     
-    overall_span_hidden_size = 4*p_hidden_size+3*hidden_size
-    overall_word_hidden_size = p_hidden_size+3*hidden_size
+    overall_span_hidden_size = 4*p_hidden_size+q_hidden_size
+    overall_word_hidden_size = p_hidden_size+q_hidden_size
     return span_input4score, word_input4score, overall_span_hidden_size,overall_word_hidden_size
 
 def add_HLs_2_tensor3(input4score, HL_1_para,HL_2_para,HL_3_para,HL_4_para,norm_U_a, batch_size,true_p_len):
