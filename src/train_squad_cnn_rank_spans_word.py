@@ -53,7 +53,7 @@ max exact_acc: 41.9110690634
 
 def evaluate_lenet5(learning_rate=0.01, n_epochs=100, batch_size=100, emb_size=300, char_emb_size=20, hidden_size=10,
                     L2_weight=0.0001, p_len_limit=400, test_p_len_limit=100, q_len_limit=20, char_len=15, filter_size = [5,5,5,5,5],
-                    char_filter_size=5, margin=0.85, extra_size=5+22, extra_emb = 10, comment = 'q head sum top 3 words emb'): #extra_size=3+46+7
+                    char_filter_size=5, margin=0.85, extra_size=5+11, extra_emb = 10, distance=10, distance_emb=10, comment = 'add distance embs'): #extra_size=3+46+7
     test_batch_size=batch_size
     model_options = locals().copy()
     print "model options", model_options
@@ -132,6 +132,9 @@ def evaluate_lenet5(learning_rate=0.01, n_epochs=100, batch_size=100, emb_size=3
 
     extra_rand_values=random_value_normal((extra_size, extra_emb), theano.config.floatX, rng)
     extra_embeddings=theano.shared(value=extra_rand_values, borrow=True)
+    
+    distance_rand_values=random_value_normal((2*distance+1, distance_emb), theano.config.floatX, rng)
+    distance_embeddings=theano.shared(value=distance_rand_values, borrow=True)
 
     # allocate symbolic variables for the data
 #     index = T.lscalar()
@@ -278,11 +281,11 @@ def evaluate_lenet5(learning_rate=0.01, n_epochs=100, batch_size=100, emb_size=3
     norm_HL_3_para=normalize_matrix(HL_3_para)
     norm_HL_4_para=normalize_matrix(HL_4_para)
 
-    end_HL_1_para = create_ensemble_para(rng, hidden_size, overall_word_hidden_size)
+    end_HL_1_para = create_ensemble_para(rng, hidden_size, overall_word_hidden_size+distance_emb)
     end_HL_2_para = create_ensemble_para(rng, hidden_size, hidden_size)
     end_HL_3_para = create_ensemble_para(rng, hidden_size, hidden_size)
     end_HL_4_para = create_ensemble_para(rng, hidden_size, hidden_size)
-    end_U_a = create_ensemble_para(rng, 1, hidden_size+overall_word_hidden_size)
+    end_U_a = create_ensemble_para(rng, 1, hidden_size+overall_word_hidden_size+distance_emb)
     end_norm_U_a=normalize_matrix(end_U_a)
     end_norm_HL_1_para=normalize_matrix(end_HL_1_para)
     end_norm_HL_2_para=normalize_matrix(end_HL_2_para)
@@ -291,7 +294,19 @@ def evaluate_lenet5(learning_rate=0.01, n_epochs=100, batch_size=100, emb_size=3
 
     start_scores_matrix = add_HLs_2_tensor3(word_input4score, norm_HL_1_para,norm_HL_2_para,norm_HL_3_para,norm_HL_4_para, norm_start_U_a, batch_size,true_p_len)
     start_scores=T.nnet.softmax(start_scores_matrix) #(batch, para_len)
-    end_scores_matrix = add_HLs_2_tensor3(word_input4score, end_norm_HL_1_para,end_norm_HL_2_para,end_norm_HL_3_para,end_norm_HL_4_para, end_norm_U_a, batch_size,true_p_len)
+    
+    '''
+    forward start info to end prediction
+    '''
+    distance_matrix = word_indices[:,0].dimshuffle(0,'x') - T.arange(true_p_len).dimshuffle('x',0)  #(batch, p_len)
+    distance_trunc_matrix = T.maximum(-distance, T.minimum(distance, distance_matrix))+distance#(batch, p_len)
+    zero_distance_matrix = T.zeros((true_batch_size*true_p_len,2*distance+1))
+    filled_distance_matrix = T.set_subtensor(zero_distance_matrix[T.arange(true_batch_size*true_p_len), distance_trunc_matrix.flatten()], 1.0)
+    filled_distance_tensor3 = filled_distance_matrix.reshape((true_batch_size, true_p_len, 2*distance+1)).dot(distance_embeddings).dimshuffle(0,2,1) #(batch_size, distance_emb, p_len)
+    
+    end_word_input4score = T.concatenate([word_input4score,filled_distance_tensor3], axis=1) #(batch, +distance_emb, p_len)
+    
+    end_scores_matrix = add_HLs_2_tensor3(end_word_input4score, end_norm_HL_1_para,end_norm_HL_2_para,end_norm_HL_3_para,end_norm_HL_4_para, end_norm_U_a, batch_size,true_p_len)
     end_scores=T.nnet.softmax(end_scores_matrix) #(batch, para_len)
     start_loss_neg_likelihood=-T.mean(T.log(start_scores[T.arange(batch_size), word_indices[:,0]]))
     end_loss_neg_likelihood=-T.mean(T.log(end_scores[T.arange(batch_size), word_indices[:,1]]))
@@ -321,8 +336,17 @@ def evaluate_lenet5(learning_rate=0.01, n_epochs=100, batch_size=100, emb_size=3
     #test
     test_start_scores_matrix = add_HLs_2_tensor3(test_word_input4score, norm_HL_1_para,norm_HL_2_para,norm_HL_3_para,norm_HL_4_para,norm_start_U_a, true_batch_size,true_p_len) #(batch, test_p_len)
     mask_test_start_return=test_start_scores_matrix*para_mask #(batch, p_len)
-
-    end_test_scores_matrix = add_HLs_2_tensor3(test_word_input4score, end_norm_HL_1_para,end_norm_HL_2_para,end_norm_HL_3_para,end_norm_HL_4_para,end_norm_U_a, true_batch_size,true_p_len) #(batch, test_p_len)
+    '''
+    forward start info to end prediction in testing
+    '''
+    test_distance_matrix = T.argmax(mask_test_start_return, axis=1).dimshuffle(0,'x') - T.arange(true_p_len).dimshuffle('x',0)  #(batch, p_len)
+    test_distance_trunc_matrix = T.maximum(-distance, T.minimum(distance, test_distance_matrix))+distance#(batch, p_len)
+    test_zero_distance_matrix = T.zeros((true_batch_size*true_p_len,2*distance+1))
+    test_filled_distance_matrix = T.set_subtensor(test_zero_distance_matrix[T.arange(true_batch_size*true_p_len), test_distance_trunc_matrix.flatten()], 1.0)
+    test_filled_distance_tensor3 = test_filled_distance_matrix.reshape((true_batch_size, true_p_len, 2*distance+1)).dot(distance_embeddings).dimshuffle(0,2,1) #(batch_size, distance_emb, p_len)
+    test_end_word_input4score = T.concatenate([test_word_input4score,test_filled_distance_tensor3], axis=1) #(batch, +distance-emb, p_len)
+    
+    end_test_scores_matrix = add_HLs_2_tensor3(test_end_word_input4score, end_norm_HL_1_para,end_norm_HL_2_para,end_norm_HL_3_para,end_norm_HL_4_para,end_norm_U_a, true_batch_size,true_p_len) #(batch, test_p_len)
     end_mask_test_return=end_test_scores_matrix*para_mask  #(batch, p_len)
 
     word_gram_1 = mask_test_start_return+end_mask_test_return
@@ -382,7 +406,7 @@ def evaluate_lenet5(learning_rate=0.01, n_epochs=100, batch_size=100, emb_size=3
     test_return = T.argmax(test_span_word_scores_matrix*test_spans_mask, axis=1) #batch
 
 #     params = [embeddings,char_embeddings]+NN_para+[U_a]
-    params = ([embeddings,char_embeddings,extra_embeddings]
+    params = ([embeddings,char_embeddings,extra_embeddings,distance_embeddings]
               +CNN_para
 #               +[span_U_a,span_HL_1_para,span_HL_2_para,span_HL_3_para,span_HL_4_para]
               +[start_U_a, HL_1_para,HL_2_para,HL_3_para,HL_4_para]
@@ -390,7 +414,7 @@ def evaluate_lenet5(learning_rate=0.01, n_epochs=100, batch_size=100, emb_size=3
               +[ans_U_a,ans_HL_1_para,ans_HL_2_para,ans_HL_3_para,ans_HL_4_para]
               )
 
-    L2_reg =L2norm_paraList([embeddings,char_embeddings,extra_embeddings,
+    L2_reg =L2norm_paraList([embeddings,char_embeddings,extra_embeddings,distance_embeddings,
     conv_W_1,conv_W_2,conv_W_1_q, conv_W_2_q, conv_W_char, conv_W_3, conv_W_3_q,
 #     conv_W_4, conv_W_5,conv_W_4_q, conv_W_5_q,
 #     span_U_a,span_HL_1_para,span_HL_2_para,span_HL_3_para,span_HL_4_para,

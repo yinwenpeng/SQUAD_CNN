@@ -32,9 +32,10 @@ postag_dict = {'PRP$': 0, 'VBG': 1, 'FW': 18, 'VBN': 4, 'POS': 19, "''": 6, 'VBP
 postag_size = len(postag_dict)
 nertag_dict = {'GPE':0, 'PERSON':1,'ORGANIZATION':2, 'O':3, 'FACILITY':4,'LOCATION':5, 'GSP':6}
 nertag_size = len(nertag_dict)
-wh_word_dict = {'What':0, 'When':1, 'Where':2, 'Which':3, 'Who':4, 'Whose':5, 'Why':6, 'How':7, 'How long':8, 'How many':9, 'How much':10,
-                'what':11, 'when':12, 'where':13, 'which':14, 'who':15, 'whose':16, 'why':17, 'how':18, 'how long':19, 'how many':20, 'how much':21}
+wh_word_dict = {#'What':0, 'When':1, 'Where':2, 'Which':3, 'Who':4, 'Whose':5, 'Why':6, 'How':7, 'How long':8, 'How many':9, 'How much':10,
+                'what':0, 'when':1, 'where':2, 'which':3, 'who':4, 'whose':5, 'why':6, 'how':7, 'how long':8, 'how many':9, 'how much':10}
 wh_word_size = len(wh_word_dict)
+months = set(['january','february','march','april','May','june','july','august','september','october','november','december'])
 def normalize_answer(s):
     """Lower text and remove punctuation, articles and extra whitespace."""
     def remove_articles(text):
@@ -3251,7 +3252,7 @@ def wordList_to_charIdList(word_list, char_len, char2id):
 def wordlist_2_extralist(wordlist, refer_wordlist):
 #     ner_para = ne_chunk(pos_tag(wordlist))
 #     iob_tagged_para = tree2conlltags(ner_para)
-    refer_str = ' '.join(refer_wordlist)
+    refer_str = ' '.join(refer_wordlist).lower()
     refer_len = len(refer_wordlist)
     wh_word_index = 0
 #     for j, entry in enumerate(refer_wordlist):
@@ -3268,11 +3269,13 @@ def wordlist_2_extralist(wordlist, refer_wordlist):
     ref_vocab = set([x.lower() for x in refer_wordlist])
     extralist=[]
     for i, word in enumerate(wordlist):
-        extra=[0.0]*5  #uppercase, digit, isInRefer, pos/q_len, distance_to_wh/q_len
+        extra=[0.0]*5  #uppercase, digit, isInRefer, pos/q_len, distance_to_wh/q_len, year, month
         if word[0].isupper():
             extra[0]=1.0
         if bool(_digits.search(word)):
             extra[1]=1.0
+#             if len(word)==4:
+#                 extra[5]=1.0
         if word.lower() in ref_vocab:
             extra[2]=1.0
         
@@ -3285,7 +3288,8 @@ def wordlist_2_extralist(wordlist, refer_wordlist):
                 break
         extra[3] = (word_index_in_q+1)*1.0/refer_len
         extra[4] = (refer_len - word_index_in_q + wh_word_index)*1.0/refer_len
-        
+#         if word.lower() in months:
+#             extra[6]=1.0
 
 #         print 'qtype_vec: ', qtype_vec
 #         print      'refer_str: ', refer_str

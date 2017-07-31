@@ -2223,9 +2223,16 @@ def squad_cnn_rank_spans_word(rng, common_input_p, common_input_q, char_common_i
              image_shape=(batch_size*q_len_limit, 1, char_emb_size, char_len),
              filter_shape=(char_emb_size, 1, char_emb_size, char_filter_size), W=conv_W_char, b=conv_b_char)
     q_word_char_reps = conv_model_q_char.maxpool_vec.reshape((batch_size, q_len_limit, char_emb_size)).dimshuffle(0,2,1) #(batch_size, char_emb_size,*q_len)
-
-    conv_input_p_1 = T.concatenate([common_input_p.dimshuffle((0,2,1)), p_word_char_reps, extra.dimshuffle(0,2,1)], axis=1)
-
+    
+    p_init_input = common_input_p.dimshuffle((0,2,1))  #(batch, emb_size, p_len)
+    conv_input_p_1 = T.concatenate([p_init_input, p_word_char_reps, extra.dimshuffle(0,2,1)], axis=1)
+#     zero_pad = T.zeros((batch_size,emb_size,1))
+#     left_word_emb = T.concatenate([zero_pad, p_init_input[:,:,:-1]], axis=2)#(batch, emb_size, p_len)
+#     right_word_emb = T.concatenate([p_init_input[:,:,1:], zero_pad], axis=2)#(batch, emb_size, p_len)
+    
+    
+    
+    
     conv_model_p_1 = Conv_with_Mask(rng, input_tensor3=conv_input_p_1,
              mask_matrix = para_mask,
              image_shape=(batch_size, 1, emb_size+char_emb_size+extra_size, p_len_limit),
@@ -2303,8 +2310,8 @@ def squad_cnn_rank_spans_word(rng, common_input_p, common_input_q, char_common_i
     q_rep_head_tail = T.concatenate([q_rep,q_heads,q_tails], axis=1) #(batch, 3*hidden)
     q_hidden_size = 3*hidden_size+3*(emb_size+char_emb_size)
 
-    conv_output_p_tensor3 = T.concatenate([conv_output_p_tensor3, conv_input_p_1], axis=1) #(batch, 3*hidden+emb+char_emb+extra_size, p_len)
-    p_hidden_size = 3*hidden_size+emb_size+char_emb_size+extra_size
+    conv_output_p_tensor3 = T.concatenate([conv_output_p_tensor3, conv_input_p_1], axis=1) #(batch, 3*hidden+1*emb+char_emb+extra_size, p_len)
+    p_hidden_size = 3*hidden_size+1*emb_size+char_emb_size+extra_size
 
     p2loop_matrix = conv_output_p_tensor3.reshape((conv_output_p_tensor3.shape[0]*conv_output_p_tensor3.shape[1], conv_output_p_tensor3.shape[2]))#(batch* hidden_size, maxsenlen)
     gram_1 = p2loop_matrix
